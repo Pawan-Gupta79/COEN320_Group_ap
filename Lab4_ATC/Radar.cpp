@@ -43,7 +43,7 @@ std::vector<msg_plane_info>& Radar::getActiveBuffer() {
 //To choose the channel with concatenating your group name with "Radar"
 //Note: It is critical to not interfere with other groups
 void Radar::ListenAirspaceArrivalAndDeparture() {
-	Radar_channel = name_attach(NULL, "your_group_name_or_Radar_id", 0);
+	Radar_channel = name_attach(NULL, "group_ap", 0);
 	if (Radar_channel == NULL) {
 		std::cerr << "Failed to create channel for Radar" << std::endl;
 		exit(EXIT_FAILURE);
@@ -141,7 +141,7 @@ msg_plane_info Radar::getAircraftData(int id) {
 	//Coen320_Lab (Task0): You need to correct the channel name
 	//It is your group name + plane id
 
-	std::string id_str = "your_group_name_or_id"+std::to_string(id);  // Convert integer id to string
+	std::string id_str = "group_ap_plane_"+std::to_string(id);  // Convert integer id to string
 	const char* ID = id_str.c_str();         // Convert string to const char*
 	int plane_channel = name_open(ID, 0);
 
