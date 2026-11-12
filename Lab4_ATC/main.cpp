@@ -20,7 +20,7 @@ int main() {
     // Create the AirTrafficControl instance
     AirTrafficControl atc;
 
-    atc.readPlanesFromFile("planes.txt");  // Ensure the file is in the correct directory
+    atc.readPlanesFromFile("group_ap_planes.txt");  // Ensure the file is in the correct directory
 
     Radar radar(tick_counter);
 
