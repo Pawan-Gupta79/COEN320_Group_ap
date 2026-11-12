@@ -78,7 +78,7 @@ int Aircraft::updatePosition() {
 
     //Coen320_Lab3(Task6): Once the arrival time is reached, send the ENTER_AIRSPACE message
     //Read and learn how we create a message
-    Message  = createEnterAirspaceMessage(id);
+    Message enterAirspaceMessage = createEnterAirspaceMessage(id);
 
     // Send message
     //Coen320_Lab3(Task7): send the message Using the MsgSend function to Radar_id channel
