@@ -196,12 +196,14 @@ void Radar::writeToSharedMemory() {
 	Check the code snippet below for reference
 	at the end you need to unmap the shared memory and close the file descriptor
 	e.g., munmap(<SharedMemory object, shared_mem>, SHARED_MEMORY_SIZE) and close(shm_fd)
+	*/
 
 
 	// Get the active buffer based on the current active index
     std::vector<msg_plane_info>& activeBuffer = getActiveBuffer();
     // Get the current timestamp
-    shared_mem->timestamp = tick_counter_ref;
+    
+	shared_mem->timestamp = tick_counter_ref;
 
 	// Check if activeBuffer is empty and set the flag accordingly
 	if (activeBuffer.empty()) {
@@ -222,19 +224,22 @@ void Radar::writeToSharedMemory() {
         }
 	// clean up
 
-	*/
+	
 	
 }
+
 
 void Radar::clearSharedMemory() {
 	// COEN320 Lab4_5 Task 2.2
 	// You need to implement the shared memory clearing process here
 	// Initialize the shared memory structure to an empty state
 	// You need to clear plane_data, count, etc.
-	// e.g.
-	//std::memset(sharedMemPtr->plane_data, 0, sizeof(sharedMemPtr->plane_data));  // Clear plane data
-	//sharedMemPtr->count = 0;  // No planes initially
-	//sharedMemPtr->is_empty.store(true);  // Set the is_empty flag to false to not block reader
+	//e.g.
+
+	// not sure this is the soution
+	std::memset(sharedMemPtr->plane_data, 0, sizeof(sharedMemPtr->plane_data));  // Clear plane data
+	sharedMemPtr->count = 0;  // No planes initially
+	sharedMemPtr->is_empty.store(true);  // Set the is_empty flag to false to not block reader
 	// Finally unmap the shared memory and close the file descriptor
 	
 }
