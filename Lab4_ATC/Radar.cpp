@@ -55,7 +55,7 @@ void Radar::ListenAirspaceArrivalAndDeparture() {
         int rcvid = MsgReceive(Radar_channel->chid, &msg, sizeof(msg), nullptr); // Replace with actual channel ID
         if (rcvid == -1) {
         	// Silently skip if MsgReceive fails, but no crash happens
-        	// std::cerr << "Error receiving airspace message:" << strerror(errno) << std::endl;
+        	std::cerr << "Error receiving airspace message:" << strerror(errno) << std::endl;
         	continue;
         }
 
@@ -72,7 +72,7 @@ void Radar::ListenAirspaceArrivalAndDeparture() {
             break;
         default:
         	//All other messages dropped
-            //std::cerr << "Unknown airspace message type" << std::endl;
+            std::cerr << "Unknown airspace message type" << std::endl;
         	break;
         }
 
@@ -93,7 +93,7 @@ void Radar::ListenUpdatePosition() {
         	writeToSharedMemory();  // Write to shared mem when all planes have left the airspace //For future Use
         	wasAirspaceEmpty = true;  // Set flag to indicate airspace is empty
         } else{
-        	//std::cout << "Airspace is empty\n";
+        	std::cout << "Airspace is empty\n";
         }
 
     }
@@ -124,7 +124,7 @@ void Radar::pollAirspace(){
 				inactiveBuffer.emplace_back(plane_info);
 			} catch (const std::exception& e) {
 				// if error to process plane get next id and exception description
-				//std::cerr << "Radar: Failed to get plane data " << planeID << ": " << e.what() << "\n";
+				std::cerr << "Radar: Failed to get plane data " << planeID << ": " << e.what() << "\n";
 				continue;
 			}
 		}
@@ -203,26 +203,33 @@ void Radar::writeToSharedMemory() {
     std::vector<msg_plane_info>& activeBuffer = getActiveBuffer();
     // Get the current timestamp
     
-	shared_mem->timestamp = tick_counter_ref;
+	 
+	sharedMemPtr->timestamp = tick_counter_ref;
+
+	// locking mutex
+	std::lock_guard<std::mutex> lock(bufferSwitchMutex);
 
 	// Check if activeBuffer is empty and set the flag accordingly
 	if (activeBuffer.empty()) {
 		std::vector<msg_plane_info>& inactiveBuffer = planesInAirspaceData[(activeBufferIndex + 1) % 2];
 		if (!inactiveBuffer.empty()){
-			shared_mem->is_empty.store(false);
-			shared_mem->count = inactiveBuffer.size();
-			std::memcpy(shared_mem->plane_data, inactiveBuffer.data(), inactiveBuffer.size() * sizeof(msg_plane_info));
+			sharedMemPtr->is_empty.store(false);
+			sharedMemPtr->count = inactiveBuffer.size();
+			std::memcpy(sharedMemPtr->plane_data, inactiveBuffer.data(), inactiveBuffer.size() * sizeof(msg_plane_info));
 			inactiveBuffer.clear();
 		}
-		shared_mem->is_empty.store(true);
-		shared_mem->count = 0;  // No planes
+		sharedMemPtr->is_empty.store(true);
+		sharedMemPtr->count = 0;  // No planes
 	} else {
-            shared_mem->is_empty.store(false);
-            shared_mem->count = activeBuffer.size();
-            std::memcpy(shared_mem->plane_data, activeBuffer.data(), activeBuffer.size() * sizeof(msg_plane_info));
+		sharedMemPtr->is_empty.store(false);
+            sharedMemPtr->count = activeBuffer.size();
+            std::memcpy(sharedMemPtr->plane_data, activeBuffer.data(), activeBuffer.size() * sizeof(msg_plane_info));
             activeBuffer.clear();
         }
 	// clean up
+	if (sharedMemPtrD)	munmap(<SharedMemory object, sharedMemPtr>, SHARED_MEMORY_SIZE);
+    if (shm_fd != -1)   close(shm_fd);
+
 
 	
 	
@@ -237,9 +244,27 @@ void Radar::clearSharedMemory() {
 	//e.g.
 
 	// not sure this is the soution
-	std::memset(sharedMemPtr->plane_data, 0, sizeof(sharedMemPtr->plane_data));  // Clear plane data
-	sharedMemPtr->count = 0;  // No planes initially
-	sharedMemPtr->is_empty.store(true);  // Set the is_empty flag to false to not block reader
+	//std::memset(sharedMemPtr->plane_data, 0, sizeof(sharedMemPtr->plane_data));  // Clear plane data
+	//sharedMemPtr->count = 0;  // No planes initially
+	//sharedMemPtr->is_empty.store(true);  // Set the is_empty flag to false to not block reader
 	// Finally unmap the shared memory and close the file descriptor
+
+	/*// probably this is the right way(got it from ComputerSystem.cpp
+
+    if (shared_mem && shared_mem != MAP_FAILED) {
+        munmap(shared_mem, sizeof(SharedMemory));
+    }
+    if (shm_fd != -1) {
+        close(shm_fd);
+    }
+	*/
+
+    if (sharedMemPtrD) {
+    	munmap(<SharedMemory object, sharedMemPtr>, SHARED_MEMORY_SIZE);
+    }
+    if (shm_fd != -1) {
+        close(shm_fd);
+    }
+
 	
 }
