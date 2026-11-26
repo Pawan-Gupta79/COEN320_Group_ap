@@ -55,6 +55,7 @@ void ATCTimer::waitTimer(){
 	// Receive a message (this call blocks until the timer pulses)
 	int receive_message_id; //to identify source
 	receive_message_id = MsgReceive(channel_id, &msg_buffer, sizeof(msg_buffer), NULL);
+	(void)receive_message_id;
 }
 
 // Function to record the current time (in cycles)
