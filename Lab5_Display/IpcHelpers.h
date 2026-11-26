@@ -1,11 +1,7 @@
 #pragma once
-// ============================================================================
-// Small helpers shared by every name_attach() server / client in Lab5.
-// (Copied into Lab5_Display as well; keep both copies identical.)
-// ============================================================================
 #include <sys/dispatch.h>
 #include <sys/neutrino.h>
-#include <sys/iomsg.h>   // _IO_CONNECT, _IO_BASE, _IO_MAX
+#include <sys/iomsg.h>
 #include <cerrno>
 #include <cstring>
 #include <string>
@@ -15,18 +11,13 @@
 #include <unistd.h>
 #include "Msg_structs.h"
 
-// Receive buffer: large enough for any of our messages OR a QNX pulse.
 union IpcBuffer {
 	struct _pulse pulse;
-	uint16_t type;                 // first 2 bytes: used to spot QNX system messages
+	uint16_t type;
 	Message_inter_process msg;
 };
 
-// A name_attach() channel also receives SYSTEM traffic besides our messages:
-//  - pulses (rcvid == 0), e.g. _PULSE_CODE_DISCONNECT when a client goes away
-//  - _IO_CONNECT when a client calls name_open(): must be replied with EOK,
-//    otherwise the client's name_open() stays blocked
-// Returns true if 'buf' was such a system message (already handled -> skip it).
+// Handles pulses and the _IO_CONNECT sent by name_open(); returns true if buf was one of those
 inline bool handleSystemMessage(int rcvid, IpcBuffer& buf) {
 	if (rcvid == 0) {
 		if (buf.pulse.code == _PULSE_CODE_DISCONNECT) {
@@ -34,8 +25,6 @@ inline bool handleSystemMessage(int rcvid, IpcBuffer& buf) {
 		}
 		return true;
 	}
-	// All of OUR messages are Message_inter_process with header == 1, so their first
-	// byte is 0x01. QNX's _IO_CONNECT (0x0100) has first byte 0x00, so no confusion.
 	if (buf.msg.header) {
 		return false;
 	}
@@ -44,15 +33,13 @@ inline bool handleSystemMessage(int rcvid, IpcBuffer& buf) {
 		return true;
 	}
 	if (buf.type >= _IO_BASE && buf.type <= _IO_MAX) {
-		MsgError(rcvid, ENOSYS);   // some other I/O request we don't support
+		MsgError(rcvid, ENOSYS);
 		return true;
 	}
-	MsgError(rcvid, EINVAL);       // not ours, not a known system message
+	MsgError(rcvid, EINVAL);
 	return true;
 }
 
-// Build a zero-initialised inter-process message with an optional payload.
-// Zeroing matters: it guarantees no garbage in padding bytes or unused data.
 inline void buildMessage(Message_inter_process& m, MessageType type, int planeID,
                          const void* payload = nullptr, size_t size = 0) {
 	std::memset(&m, 0, sizeof(m));
@@ -66,8 +53,7 @@ inline void buildMessage(Message_inter_process& m, MessageType type, int planeID
 	m.dataSize = size;
 }
 
-// Send 'msg' to the server attached as 'name' and wait for its int status reply.
-// Returns the server's status (0 = OK), or -1 if the server could not be reached.
+// Returns the server's reply status, or -1 if it could not be reached
 inline int sendToServer(const char* name, const Message_inter_process& msg) {
 	int coid = name_open(name, 0);
 	if (coid == -1) {
@@ -81,23 +67,17 @@ inline int sendToServer(const char* name, const Message_inter_process& msg) {
 	return reply;
 }
 
-// ---------------------------------------------------------------------------
-// Reader side of the Radar's shared memory
-// ---------------------------------------------------------------------------
-// A consistent copy of the shared memory, taken while holding its mutex.
 struct RadarSnapshot {
 	std::vector<msg_plane_info> planes;
 	uint64_t timestamp = 0;
 	bool simulationOver = false;
 };
 
-// Open + map the Radar's shared memory. Returns the mapping, or nullptr if the
-// Radar hasn't created it yet (caller retries). Mapped read/write because
-// locking the process-shared mutex WRITES to it; we never modify the data.
+// Mapped read/write because locking the process-shared mutex writes to it
 inline SharedMemory* openRadarSharedMemory(int& fd) {
 	fd = shm_open(RADAR_SHM_NAME, O_RDWR, 0666);
 	if (fd == -1) {
-		return nullptr;  // ENOENT: Radar not running yet
+		return nullptr;
 	}
 	void* addr = mmap(nullptr, sizeof(SharedMemory), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (addr == MAP_FAILED) {
@@ -118,11 +98,8 @@ inline void closeRadarSharedMemory(SharedMemory*& shm, int& fd) {
 		close(fd);
 		fd = -1;
 	}
-	// No shm_unlink here: the Radar owns (created) the object and deletes it.
 }
 
-// Copy everything we need while holding the lock, then release it quickly so
-// the Radar (the writer) is never blocked for long.
 inline RadarSnapshot takeSnapshot(SharedMemory* shm) {
 	RadarSnapshot s;
 	pthread_mutex_lock(&shm->mutex);

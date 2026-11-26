@@ -3,20 +3,23 @@
 #include "CommunicationsSystem.h"
 
 int main() {
-    // Task 4: three cooperating parts in this process, each with its own thread(s):
-    //   OperatorConsole --IPC--> ComputerSystem --IPC--> CommunicationsSystem --IPC--> Aircraft
-    // Construction order matters: each part's channel must exist before the part
-    // that sends to it starts. C++ destroys locals in REVERSE order, so shutdown
-    // goes console -> computer -> comms, i.e. senders stop before receivers.
+    // Task 4 (You need to first implement Task 3)
+    /*
+    You need to implement OperatorConsole to send commands to Aircraft
+    You may make another class and read user commands to adjust the aircraft data in case of collision.
+    You may use Message_inter_process with MessageType to communicate with Aircrafts:
+    MessageType::REQUEST_CHANGE_OF_HEADING, MessageType::REQUEST_CHANGE_POSITION, MessageType::REQUEST_CHANGE_ALTITUDE
+    // check OperatorConsole.h and CommunicationsSystem.h for a template
+    */
     CommunicationsSystem comms;
     ComputerSystem computerSystem;
 
     if (computerSystem.startMonitoring()) {
-        OperatorConsole console;      // starts reading commands once monitoring is up
-        computerSystem.joinThread();  // returns when the Radar says the simulation is over
+        OperatorConsole console;
+        computerSystem.joinThread();
     } else {
-        std::cerr << "Failed to start monitoring." << std::endl;
-    }
+            std::cerr << "Failed to start monitoring." << std::endl;
+        }
 
     std::cout << "Monitoring stopped. Exiting main." << std::endl;
 

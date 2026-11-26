@@ -63,14 +63,13 @@ private:
     ATCTimer timer;
 
     // Shared memory pointer
-    SharedMemory* sharedMemPtr = nullptr;  // Points into the mapped shared memory
+    SharedMemory* sharedMemPtr = nullptr;  // Update pointer type to match the structure
     bool wasAirspaceEmpty = true;  // Track if airspace was empty last time
     int shm_fd = -1;
     std::atomic<bool> stopThreads;
 
     void shutdown();
 
-    // Shared memory lifecycle: create+map at startup, unmap+unlink at exit
     bool initSharedMemory();
     void cleanupSharedMemory();
 

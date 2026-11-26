@@ -6,12 +6,10 @@
 #include <algorithm>
 #include <chrono>
 
-// Grid size: the 100 000 x 100 000 airspace drawn as 50 columns x 20 rows
 static const int GRID_COLS = 50;
 static const int GRID_ROWS = 20;
 static const size_t MAX_HISTORY = 5;
 
-// ANSI escape codes (only used when useAnsi is true)
 static const char* ANSI_CLEAR = "\033[2J\033[H";
 static const char* ANSI_RED   = "\033[1;31m";
 static const char* ANSI_BOLD  = "\033[1m";
@@ -22,11 +20,10 @@ Display::Display(bool ansi) : useAnsi(ansi) {}
 Display::~Display() {
 	join();
 	stopServer();
-	closeRadarSharedMemory(shm, shm_fd);   // munmap + close (Radar unlinks)
+	closeRadarSharedMemory(shm, shm_fd);
 }
 
 bool Display::start() {
-	// 1. IPC server channel first, so collision alerts can arrive at any time
 	channel = name_attach(NULL, DISPLAY_CHANNEL_NAME, 0);
 	if (channel == NULL) {
 		perror("Display: name_attach failed");
@@ -34,7 +31,6 @@ bool Display::start() {
 	}
 	serverThread = std::thread(&Display::serverLoop, this);
 
-	// 2. Wait for the Radar's shared memory
 	bool announced = false;
 	while ((shm = openRadarSharedMemory(shm_fd)) == nullptr) {
 		if (!announced) {
@@ -44,7 +40,6 @@ bool Display::start() {
 		std::this_thread::sleep_for(std::chrono::seconds(1));
 	}
 
-	// 3. Periodic reader/renderer
 	readerThread = std::thread(&Display::readerLoop, this);
 	return true;
 }
@@ -55,17 +50,12 @@ void Display::join() {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Reader: one refresh per second, driven by a QNX periodic timer
-// ---------------------------------------------------------------------------
 void Display::readerLoop() {
 	ATCTimer timer(1, 0);
 	while (true) {
-		RadarSnapshot snap = takeSnapshot(shm);   // copy under the process-shared mutex
+		RadarSnapshot snap = takeSnapshot(shm);
 		lastTick = snap.timestamp;
 
-		// Build the whole frame in memory, then write it in ONE call:
-		// no flicker and no half-drawn frames.
 		std::string frame = render(snap);
 		std::cout << frame << std::flush;
 
@@ -78,7 +68,6 @@ void Display::readerLoop() {
 }
 
 std::string Display::render(const RadarSnapshot& snap) {
-	// Copy the alert state under its lock, then draw without holding it
 	std::vector<std::pair<int,int>> pairs;
 	std::deque<std::string> history;
 	{
@@ -102,7 +91,6 @@ std::string Display::render(const RadarSnapshot& snap) {
 	    << "     Aircraft in airspace: " << std::setw(3) << snap.planes.size()
 	    << "     Active conflicts: " << pairs.size() << "\n";
 
-	// Collision banner: shown on every refresh while the conflict lasts
 	for (const auto& p : pairs) {
 		out << (useAnsi ? ANSI_RED : "")
 		    << " *** COLLISION WARNING: Aircraft " << p.first << " and " << p.second << " ***"
@@ -148,8 +136,6 @@ std::string Display::renderTable(const RadarSnapshot& snap, const std::set<int>&
 	return t.str();
 }
 
-// Top-down view (X to the right, Y upwards). Each aircraft is drawn with the
-// last digit of its ID; '+' means several aircraft share a cell.
 std::string Display::renderGrid(const RadarSnapshot& snap, const std::set<int>& flagged) {
 	std::vector<std::string> cells(GRID_ROWS, std::string(GRID_COLS, '.'));
 	std::vector<std::vector<bool>> red(GRID_ROWS, std::vector<bool>(GRID_COLS, false));
@@ -179,9 +165,6 @@ std::string Display::renderGrid(const RadarSnapshot& snap, const std::set<int>& 
 	return g.str();
 }
 
-// ---------------------------------------------------------------------------
-// IPC server: collision alerts from the ComputerSystem
-// ---------------------------------------------------------------------------
 void Display::serverLoop() {
 	while (true) {
 		IpcBuffer buf;
@@ -190,7 +173,7 @@ void Display::serverLoop() {
 			perror("Display: MsgReceive failed");
 			break;
 		}
-		if (handleSystemMessage(rcvid, buf)) continue;   // pulse / name_open connect
+		if (handleSystemMessage(rcvid, buf)) continue;
 
 		int status = 0;
 		const Message_inter_process& msg = buf.msg;
@@ -204,11 +187,8 @@ void Display::serverLoop() {
 			continue;
 		}
 
-		// Reply FIRST: the ComputerSystem's monitor thread is blocked in MsgSend
-		// until we reply, and it shouldn't wait while we update the screen.
 		MsgReply(rcvid, EOK, &status, sizeof(status));
 
-		// Decode the list of pairs (the message is always the COMPLETE current list)
 		size_t n = msg.dataSize / sizeof(msg_collision_pair);
 		if (n > MAX_COLLISION_PAIRS) n = MAX_COLLISION_PAIRS;
 		std::vector<std::pair<int,int>> pairs;
@@ -225,7 +205,6 @@ void Display::serverLoop() {
 				std::ostringstream line;
 				line << "[t=" << lastTick.load() << "s] *** COLLISION WARNING: Aircraft "
 				     << p.first << " and " << p.second << " ***";
-				// Print immediately (prompt warning), and keep it in the history panel
 				std::cout << (useAnsi ? ANSI_RED : "") << line.str()
 				          << (useAnsi ? ANSI_RESET : "") << std::endl;
 				alertHistory.push_front(line.str());
@@ -240,7 +219,7 @@ void Display::stopServer() {
 	if (!serverThread.joinable()) return;
 	Message_inter_process exitMsg;
 	buildMessage(exitMsg, MessageType::EXIT, -1);
-	sendToServer(DISPLAY_CHANNEL_NAME, exitMsg);   // unblock our own MsgReceive
+	sendToServer(DISPLAY_CHANNEL_NAME, exitMsg);
 	serverThread.join();
 	if (channel != nullptr) {
 		name_detach(channel, 0);

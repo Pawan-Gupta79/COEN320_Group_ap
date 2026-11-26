@@ -3,52 +3,39 @@
 
 
 Radar::Radar(uint64_t& tick_counter) : tick_counter_ref(tick_counter), activeBufferIndex(0), timer(1,0), stopThreads(false) {
-	// Shared memory must exist BEFORE the threads start, because
-	// ListenUpdatePosition() writes into it.
 	if (!initSharedMemory()) {
 		std::cerr << "Radar: could not set up shared memory, exiting" << std::endl;
 		exit(EXIT_FAILURE);
 	}
-	clearSharedMemory();  // start from a known-empty state
-
-	// Start threads for listening to airspace events.
-	// (Radar_channel is initialised to NULL in Radar.h. It used to be set to NULL
-	// here, AFTER the threads started, which could wipe out the channel the
-	// thread had just attached.)
+	clearSharedMemory(); //For future Use
+	// Start threads for listening to airspace events
     Arrival_Departure = std::thread(&Radar::ListenAirspaceArrivalAndDeparture, this);
     UpdatePosition = std::thread(&Radar::ListenUpdatePosition, this);
 }
 
 Radar::~Radar() {
-    // Join threads first so nobody is writing to shared memory while we tear it down
+    // Join threads to ensure proper cleanup
     shutdown();
-    clearSharedMemory();    // readers that still have it mapped will see "empty"
+    clearSharedMemory();//For future Use
 
-    // Tell the readers (ComputerSystem, Display) that the simulation is over,
-    // then give them a moment (they poll once per second) to notice and stop
-    // touching the mutex before we destroy it.
     if (sharedMemPtr != nullptr) {
     	pthread_mutex_lock(&sharedMemPtr->mutex);
     	sharedMemPtr->simulation_over = true;
     	pthread_mutex_unlock(&sharedMemPtr->mutex);
     	std::cout << "Radar: simulation over, notifying readers..." << std::endl;
+    	// give the readers time to see the flag before the mutex is destroyed
     	std::this_thread::sleep_for(std::chrono::seconds(2));
     }
-    cleanupSharedMemory();  // destroy mutex + munmap + close + shm_unlink
+    cleanupSharedMemory();
 }
 
-// COEN320 Lab4_5 Task 2.1 (setup): create the shared memory object and map it
 bool Radar::initSharedMemory() {
-	// 1. Create (or open, if left over from a crashed run) the shared memory object.
-	//    O_CREAT: create if missing, O_RDWR: we will write to it.
-	//    0666: readable/writable by other processes (ComputerSystem, Display).
 	shm_fd = shm_open(RADAR_SHM_NAME, O_CREAT | O_RDWR, 0666);
 	if (shm_fd == -1) {
 		perror("Radar: shm_open failed");
 		return false;
 	}
 
-	// 2. A new shared memory object has size 0. Give it room for one SharedMemory struct.
 	if (ftruncate(shm_fd, SHARED_MEMORY_SIZE) == -1) {
 		perror("Radar: ftruncate failed");
 		close(shm_fd);
@@ -57,8 +44,6 @@ bool Radar::initSharedMemory() {
 		return false;
 	}
 
-	// 3. Map it into our address space. MAP_SHARED means our writes are visible
-	//    to every other process that maps the same object.
 	void* addr = mmap(nullptr, SHARED_MEMORY_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 	if (addr == MAP_FAILED) {
 		perror("Radar: mmap failed");
@@ -70,9 +55,6 @@ bool Radar::initSharedMemory() {
 
 	sharedMemPtr = static_cast<SharedMemory*>(addr);
 
-	// 4. Initialise the mutex that protects the shared data ACROSS PROCESSES.
-	//    A normal mutex only works between threads of one process;
-	//    PTHREAD_PROCESS_SHARED lets ComputerSystem and Display lock it too.
 	pthread_mutexattr_t attr;
 	pthread_mutexattr_init(&attr);
 	int rc = pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED);
@@ -94,7 +76,6 @@ bool Radar::initSharedMemory() {
 	return true;
 }
 
-// COEN320 Lab4_5 Task 2.2 (teardown): unmap, close and delete the shared memory object
 void Radar::cleanupSharedMemory() {
 	if (sharedMemPtr != nullptr) {
 		pthread_mutex_destroy(&sharedMemPtr->mutex);
@@ -107,8 +88,6 @@ void Radar::cleanupSharedMemory() {
 		close(shm_fd);
 		shm_fd = -1;
 	}
-	// Removes the name from /dev/shmem. Processes that already have it mapped
-	// keep their mapping until they unmap it themselves.
 	if (shm_unlink(RADAR_SHM_NAME) == -1) {
 		perror("Radar: shm_unlink failed");
 	}
@@ -156,8 +135,7 @@ void Radar::ListenAirspaceArrivalAndDeparture() {
         	// std::cerr << "Error receiving airspace message:" << strerror(errno) << std::endl;
         	continue;
         }
-        if (rcvid == 0) {
-        	// A pulse (e.g. a client disconnecting): no one is waiting for a reply
+        if (rcvid == 0) {  // pulse
         	continue;
         }
 
@@ -185,8 +163,7 @@ void Radar::ListenUpdatePosition() {
 
     while (!stopThreads.load()) {
     	timer.waitTimer(); // Wait for the next timer interval before polling again
-    	// Only poll airspace if there are planes.
-    	// planesInAirspace is modified by the other thread, so read it under the mutex.
+    	// Only poll airspace if there are planes
     	bool hasPlanes;
     	{
     		std::lock_guard<std::mutex> lock(airspaceMutex);
@@ -238,9 +215,6 @@ void Radar::pollAirspace(){
 		}
 	}
 
-	// Double buffering: we filled the inactive buffer above; now make it the
-	// active one in a single step. This used to sit inside the for-loop, which
-	// swapped after the FIRST plane, so a reader could see a half-filled buffer.
 	{
 		std::lock_guard<std::mutex> lock(bufferSwitchMutex);
 	    activeBufferIndex = inactiveBufferIndex;
@@ -251,7 +225,7 @@ msg_plane_info Radar::getAircraftData(int id) {
 	//Coen320_Lab (Task0): You need to correct the channel name
 	//It is your group name + plane id
 
-	std::string id_str = PLANE_CHANNEL_PREFIX + std::to_string(id);  // e.g. "group_ap_plane_3"
+	std::string id_str = PLANE_CHANNEL_PREFIX + std::to_string(id);  // Convert integer id to string
 	const char* ID = id_str.c_str();         // Convert string to const char*
 	int plane_channel = name_open(ID, 0);
 
@@ -261,10 +235,8 @@ msg_plane_info Radar::getAircraftData(int id) {
 
 	// Prepare a message to request position data
 	Message requestMsg;
-	// Zero everything, INCLUDING the padding byte after 'header'. The aircraft looks
-	// at the first two bytes to tell our messages apart from QNX system messages.
 	std::memset(&requestMsg, 0, sizeof(requestMsg));
-	requestMsg.header = false;  // periodic, intra-process (the aircraft checks this bit!)
+	requestMsg.header = false;
 	requestMsg.type = MessageType::REQUEST_POSITION;
 	requestMsg.planeID = id;
 	requestMsg.data = NULL;
@@ -308,40 +280,32 @@ void Radar::writeToSharedMemory() {
 	Make sure to use mutex to protect the buffer switching process (e.g., bufferSwitchMutex)
 	To store aircraft data, use inactiveBuffer which is obtained from getActiveBuffer() method
 	Check the code snippet below for reference
-	(Design note: we map ONCE in initSharedMemory() and unmap ONCE in
-	cleanupSharedMemory(), instead of mapping/unmapping on every write.
-	Writes happen every second, so re-mapping each time would be wasteful.)
+	at the end you need to unmap the shared memory and close the file descriptor
+	e.g., munmap(<SharedMemory object, shared_mem>, SHARED_MEMORY_SIZE) and close(shm_fd)
 	*/
 	if (sharedMemPtr == nullptr) return;
 
-	// Two locks, always taken in this order:
-	//  - bufferSwitchMutex: so pollAirspace() (our own thread) can't swap buffers mid-copy
-	//  - sharedMemPtr->mutex: so the readers in OTHER processes never see a half-written update
 	std::lock_guard<std::mutex> lock(bufferSwitchMutex);
 	pthread_mutex_lock(&sharedMemPtr->mutex);
 
-	// Latest radar scan (filled by pollAirspace()).
+	// Get the active buffer based on the current active index
 	std::vector<msg_plane_info>& activeBuffer = getActiveBuffer();
 
-	// Never copy more than the shared array can hold (plane_data[100])
-	const size_t capacity = sizeof(sharedMemPtr->plane_data) / sizeof(msg_plane_info);
 	size_t n = activeBuffer.size();
-	if (n > capacity) n = capacity;
+	if (n > MAX_PLANES) n = MAX_PLANES;
 
-	// Write the data FIRST, then the flag LAST. A reader that sees
-	// is_empty == false is then guaranteed to find the data already in place.
 	if (n > 0) {
 		std::memcpy(sharedMemPtr->plane_data, activeBuffer.data(), n * sizeof(msg_plane_info));
-		sharedMemPtr->start = true;  // planes have appeared at least once this run
+		sharedMemPtr->start = true;
 	}
 	sharedMemPtr->count = static_cast<int>(n);
+	// Get the current timestamp
 	sharedMemPtr->timestamp = tick_counter_ref;
+	// Check if activeBuffer is empty and set the flag accordingly
 	sharedMemPtr->is_empty.store(n == 0);
 	pthread_mutex_unlock(&sharedMemPtr->mutex);
 
-	// Empty the buffer we just published. When the last plane leaves,
-	// ListenUpdatePosition() calls us once more WITHOUT polling. The buffer is
-	// then empty, so we publish is_empty = true instead of re-publishing stale planes.
+	// clean up
 	activeBuffer.clear();
 }
 
@@ -351,17 +315,15 @@ void Radar::clearSharedMemory() {
 	// You need to implement the shared memory clearing process here
 	// Initialize the shared memory structure to an empty state
 	// You need to clear plane_data, count, etc.
-	//
-	// This only RESETS the contents. Unmapping/unlinking is in cleanupSharedMemory(),
-	// because clear is also called at startup, when we still need the mapping.
-	if (sharedMemPtr == nullptr) return;  // nothing mapped -> nothing to clear
+	if (sharedMemPtr == nullptr) return;
 
 	std::lock_guard<std::mutex> lock(bufferSwitchMutex);
 	pthread_mutex_lock(&sharedMemPtr->mutex);
 	std::memset(sharedMemPtr->plane_data, 0, sizeof(sharedMemPtr->plane_data));  // Clear plane data
-	sharedMemPtr->count = 0;               // No planes
-	sharedMemPtr->start = false;           // No planes seen yet this run
+	sharedMemPtr->count = 0;  // No planes initially
+	sharedMemPtr->start = false;
 	sharedMemPtr->timestamp = tick_counter_ref;
-	sharedMemPtr->is_empty.store(true);    // Readers will treat the airspace as empty
+	sharedMemPtr->is_empty.store(true);  // Set the is_empty flag to false to not block reader
 	pthread_mutex_unlock(&sharedMemPtr->mutex);
+	// Finally unmap the shared memory and close the file descriptor (done in cleanupSharedMemory)
 }

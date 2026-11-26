@@ -2,8 +2,6 @@
 #include <cstring>
 #include <iostream>
 
-// Usage:  Display            (colours + clear-screen; run in a real terminal, e.g. ssh/telnet)
-//         Display --plain    (no escape codes; use this in the Momentics console)
 int main(int argc, char* argv[]) {
 	bool useAnsi = true;
 	for (int i = 1; i < argc; ++i) {
@@ -15,7 +13,7 @@ int main(int argc, char* argv[]) {
 		std::cerr << "Display failed to start." << std::endl;
 		return 1;
 	}
-	display.join();   // returns when the Radar reports the simulation is over
+	display.join();
 	std::cout << "Display stopped." << std::endl;
 	return 0;
 }

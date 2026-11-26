@@ -10,11 +10,8 @@
 #include <cstring> // For memcpy
 
 // COEN320 Task 3.1, set the display channel name (it should be the same as the Coen320_Lab (Task0) Display channel name)
-#define display_channel_name DISPLAY_CHANNEL_NAME   // "group_ap_display", see Msg_structs.h
+#define display_channel_name DISPLAY_CHANNEL_NAME
 
-// Priority for the collision-monitor thread. QNX's default is 10; the
-// safety-critical task (collision detection) runs above the operator console
-// and comms threads so a busy console can never delay a collision warning.
 static const int MONITOR_PRIORITY = 20;
 
 
@@ -27,12 +24,16 @@ ComputerSystem::~ComputerSystem() {
 }
 
 bool ComputerSystem::initializeSharedMemory() {
-	// COEN320 Task 3.2 / 3.3
-	// Open the Radar's shared memory and map it into "shared_mem".
-	// The Radar may not be running yet, so retry once per second until it is.
+	// Open the shared memory object
 	bool announced = false;
 	while (true) {
-		shared_mem = openRadarSharedMemory(shm_fd);   // shm_open + mmap (IpcHelpers.h)
+        // COEN320 Task 3.2
+		// Attempt to open the shared memory object (You need to use the same name as Task 2 in Radar)
+        // In case of error, retry until successful
+        // COEN320 Task 3.3
+		// Map the shared memory object into the process's address space
+        // The shared memory should be mapped to "shared_mem" (check for errors)
+		shared_mem = openRadarSharedMemory(shm_fd);
 		if (shared_mem != nullptr) {
 			std::cout << "Shared memory " << RADAR_SHM_NAME << " initialized successfully." << std::endl;
 			return true;
@@ -49,12 +50,10 @@ bool ComputerSystem::initializeSharedMemory() {
 }
 
 void ComputerSystem::cleanupSharedMemory() {
-	closeRadarSharedMemory(shared_mem, shm_fd);  // munmap + close (Radar does the unlink)
+	closeRadarSharedMemory(shared_mem, shm_fd);
 }
 
 bool ComputerSystem::startMonitoring() {
-	// 1. Open our own channel first so the OperatorConsole can reach us
-	//    even while we wait for the Radar.
 	operatorChannel = name_attach(NULL, COMPUTER_CHANNEL_NAME, 0);
 	if (operatorChannel == NULL) {
 		perror("ComputerSystem: name_attach failed");
@@ -62,13 +61,11 @@ bool ComputerSystem::startMonitoring() {
 	}
 	monitorOperatorInput = std::thread(&ComputerSystem::processMessage, this);
 
-	// 2. Wait for the Radar's shared memory, then start the monitor thread.
     if (initializeSharedMemory()) {
         running = true; // will be used in monitorAirspace
         std::cout << "Starting monitoring thread." << std::endl;
         monitorThread = std::thread(&ComputerSystem::monitorAirspace, this);
 
-        // Give the safety-critical thread a higher real-time priority
         sched_param param;
         param.sched_priority = MONITOR_PRIORITY;
         int rc = pthread_setschedparam(monitorThread.native_handle(), SCHED_RR, &param);
@@ -89,12 +86,11 @@ void ComputerSystem::joinThread() {
 }
 
 void ComputerSystem::monitorAirspace() {
-	ATCTimer timer(1,0);   // periodic: one radar scan per second
+	ATCTimer timer(1,0);
 	bool wasEmpty = false;
 	bool firstPass = true;
 
 	while (running) {
-		// Copy the shared data under the process-shared mutex (see takeSnapshot)
 		RadarSnapshot snap = takeSnapshot(shared_mem);
 
 		if (snap.simulationOver) {
@@ -110,10 +106,9 @@ void ComputerSystem::monitorAirspace() {
 		firstPass = false;
 
 		//**************Call Collision Detector*********************
-		// Called even with 0 or 1 planes: that clears any old warnings
 		checkCollision(snap.timestamp, snap.planes);
 
-        // Wait for the next period
+        // Sleep for a short interval before the next poll
 		timer.waitTimer();
     }
 	running = false;
@@ -122,7 +117,10 @@ void ComputerSystem::monitorAirspace() {
 
 void ComputerSystem::checkCollision(uint64_t currentTime, std::vector<msg_plane_info> planes) {
     // COEN320 Task 3.4
-    // Check every PAIR of planes once (i < j): n*(n-1)/2 checks.
+    // detect collisions between planes in the airspace within the time constraint
+    // You need to Iterate through each pair of planes and in case of collision,
+    // store the pair of plane IDs that are predicted to collide
+    // You can use the function checkAxes provided below to check if two planes will collide
     std::set<std::pair<int,int>> current;
     for (size_t i = 0; i < planes.size(); ++i) {
     	for (size_t j = i + 1; j < planes.size(); ++j) {
@@ -134,7 +132,6 @@ void ComputerSystem::checkCollision(uint64_t currentTime, std::vector<msg_plane_
     	}
     }
 
-    // Console warning only for NEW pairs, so the console isn't flooded every second
     for (const auto& p : current) {
     	if (lastCollisions.find(p) == lastCollisions.end()) {
     		std::cout << "[t=" << currentTime << "s] *** COLLISION WARNING: Aircraft "
@@ -150,13 +147,17 @@ void ComputerSystem::checkCollision(uint64_t currentTime, std::vector<msg_plane_
     }
 
     // COEN320 Task 3.5
-    // Tell the Display whenever the set of conflicts CHANGES (including when it
-    // becomes empty, so the Display can remove the highlight). The Display
-    // treats each message as "the complete current list".
+    // in case of collision, send message to Display system
+    /*
+    HINT:
+    In case of collision a Message (type Message_inter_process) should be sent to the Display system
+    The data field of the message should contain the list of pairs of plane IDs that are predicted to collide
+    Make sure to fill dataSize field of the message appropriately
+    */
     if (current != lastCollisions || !displayUpToDate) {
     	std::vector<msg_collision_pair> pairs;
     	for (const auto& p : current) {
-    		if (pairs.size() >= MAX_COLLISION_PAIRS) break;  // 256-byte payload limit
+    		if (pairs.size() >= MAX_COLLISION_PAIRS) break;
     		pairs.push_back({p.first, p.second});
     	}
     	Message_inter_process msg_to_send;
@@ -171,14 +172,12 @@ void ComputerSystem::checkCollision(uint64_t currentTime, std::vector<msg_plane_
     lastCollisions = current;
 }
 
-// Solve, for ONE axis, when |d + v*t| < C, where d = position difference and
-// v = velocity difference. Returns the time interval [lo, hi] (may be empty).
+// Time interval in which |d + v*t| < C on one axis
 static void axisConflictInterval(double d, double v, double C, double& lo, double& hi) {
 	const double INF = std::numeric_limits<double>::infinity();
 	if (std::fabs(v) < 1e-9) {
-		// Same speed on this axis: the gap never changes
-		if (std::fabs(d) < C) { lo = -INF; hi = INF; }   // always too close
-		else                  { lo = INF;  hi = -INF; }  // never too close (empty)
+		if (std::fabs(d) < C) { lo = -INF; hi = INF; }
+		else                  { lo = INF;  hi = -INF; }
 		return;
 	}
 	double t1 = (-C - d) / v;
@@ -189,12 +188,12 @@ static void axisConflictInterval(double d, double v, double C, double& lo, doubl
 
 bool ComputerSystem::checkAxes(msg_plane_info plane1, msg_plane_info plane2) {
     // COEN320 Task 3.4
-    // Planes move in straight lines: p(t) = p0 + v*t. They are in conflict at time t
-    // if they are too close on X AND Y AND Z at that SAME t. For each axis we solve
-    // exactly for the time interval where that axis is too close, then intersect the
-    // three intervals with the look-ahead window [0, T]. If anything is left, the
-    // planes will violate separation within T seconds.
-    //   (Exact, and cheaper than simulating t = 0,1,2,...,T step by step.)
+    // A collision is defined as two planes entering the defined airspace constraints within the time constraint
+    // You need to implement the logic to check if plane1 and plane2 will collide within the time constraint
+    // Return true if they will collide, false otherwise
+    // A simple approach is to just check if their positions will be within the defined constraints (e.g., CONSTRAINT_X, CONSTRAINT_Y, CONSTRAINT_Z)
+    // A more accurate approach would involve calculating their future positions based on their velocities
+    // and checking if those future positions will be within the defined constraints within the time constraint
     double lo = 0.0;
     double hi = static_cast<double>(timeConstraintCollisionFreq.load());
 
@@ -211,14 +210,9 @@ bool ComputerSystem::checkAxes(msg_plane_info plane1, msg_plane_info plane2) {
 
 
 bool ComputerSystem::sendCollisionToDisplay(const Message_inter_process& msg){
-	// name_open + MsgSend + name_close (the template never closed the connection,
-	// which leaked one connection per message). Returns false if the Display isn't running.
 	return sendToServer(display_channel_name, msg) != -1;
 }
 
-// ---------------------------------------------------------------------------
-// Task 4: commands from the OperatorConsole arrive on COMPUTER_CHANNEL_NAME
-// ---------------------------------------------------------------------------
 void ComputerSystem::processMessage() {
 	while (true) {
 		IpcBuffer buf;
@@ -228,12 +222,12 @@ void ComputerSystem::processMessage() {
 			perror("ComputerSystem: MsgReceive failed");
 			continue;
 		}
-		if (handleSystemMessage(rcvid, buf)) continue;  // pulse / name_open connect
+		if (handleSystemMessage(rcvid, buf)) continue;
 
 		const Message_inter_process& msg = buf.msg;
 		int status = 0;
 		switch (msg.type) {
-		case MessageType::EXIT:            // sent by stopOperatorListener() at shutdown
+		case MessageType::EXIT:
 			MsgReply(rcvid, EOK, &status, sizeof(status));
 			return;
 		case MessageType::CHANGE_TIME_CONSTRAINT_COLLISIONS:
@@ -245,14 +239,14 @@ void ComputerSystem::processMessage() {
 		case MessageType::REQUEST_CHANGE_OF_HEADING:
 		case MessageType::REQUEST_CHANGE_POSITION:
 		case MessageType::REQUEST_CHANGE_ALTITUDE:
-			status = sendMessagesToComms(msg);   // forwarded to the aircraft
+			status = sendMessagesToComms(msg);
 			break;
 		default:
 			std::cerr << "ComputerSystem: unexpected message type " << static_cast<int>(msg.type) << "\n";
 			status = -1;
 			break;
 		}
-		MsgReply(rcvid, EOK, &status, sizeof(status));   // unblock the console
+		MsgReply(rcvid, EOK, &status, sizeof(status));
 	}
 }
 
@@ -298,7 +292,6 @@ void ComputerSystem::printAugmentedInfo(int planeID) {
 
 void ComputerSystem::stopOperatorListener() {
 	if (!monitorOperatorInput.joinable()) return;
-	// The listener is blocked in MsgReceive. Unblock it cleanly by sending it an EXIT message.
 	listen = false;
 	Message_inter_process exitMsg;
 	buildMessage(exitMsg, MessageType::EXIT, -1);

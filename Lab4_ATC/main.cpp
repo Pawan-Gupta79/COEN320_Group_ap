@@ -20,9 +20,6 @@ int main(int argc, char* argv[]) {
     // Create the AirTrafficControl instance
     AirTrafficControl atc;
 
-    // Input file: a path given as the first argument, otherwise
-    // group_ap_planes.txt in the working directory, otherwise in /tmp
-    // (a program launched from Momentics may not run in the folder you expect).
     std::string planesFile = "group_ap_planes.txt";
     if (argc > 1) {
         planesFile = argv[1];
@@ -30,7 +27,7 @@ int main(int argc, char* argv[]) {
         planesFile = "/tmp/group_ap_planes.txt";
     }
     std::cout << "Reading aircraft from " << planesFile << std::endl;
-    atc.readPlanesFromFile(planesFile);
+    atc.readPlanesFromFile(planesFile);  // Ensure the file is in the correct directory
 
     Radar radar(tick_counter);
 

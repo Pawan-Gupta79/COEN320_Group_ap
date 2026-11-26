@@ -16,7 +16,6 @@
 #include <utility>
 #include <sys/dispatch.h>
 
-// Minimum separation: two planes closer than this on ALL three axes = collision
 const double CONSTRAINT_X = 3000;
 const double CONSTRAINT_Y = 3000;
 const double CONSTRAINT_Z = 1000;
@@ -48,14 +47,10 @@ private:
     bool sendCollisionToDisplay(const Message_inter_process& msg);
     void stopOperatorListener();
 
-    bool displayUpToDate = true;   // false -> last send to Display failed, retry next cycle
-
-    // Look-ahead window (seconds) for collision prediction. Atomic because the
-    // operator thread changes it while the monitor thread reads it.
     std::atomic<int> timeConstraintCollisionFreq{180};
 
-    // Collision pairs reported last cycle, to only notify when the set changes
     std::set<std::pair<int,int>> lastCollisions;
+    bool displayUpToDate = true;
 
     int shm_fd;
     SharedMemory* shared_mem;
@@ -63,7 +58,7 @@ private:
     std::thread monitorOperatorInput;
     std::atomic<bool> running;
 
-    name_attach_t* operatorChannel = nullptr;  // receives OperatorConsole commands
+    name_attach_t* operatorChannel = nullptr;
     std::atomic<bool> listen{true};
 };
 

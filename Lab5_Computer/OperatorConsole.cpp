@@ -12,7 +12,7 @@ OperatorConsole::OperatorConsole() {
 }
 
 OperatorConsole::~OperatorConsole() {
-	exit = true;   // the input loop checks this at least every 500 ms
+	exit = true;
 	if (Operator_Console.joinable()) {
 		Operator_Console.join();
 	}
@@ -34,16 +34,15 @@ void OperatorConsole::printHelp() {
 void OperatorConsole::HandleConsoleInputs() {
 	std::string line;
 	while (!exit) {
-		// Wait up to 500 ms for keyboard input instead of blocking forever in
-		// getline(). That way the thread can notice 'exit' and shut down cleanly.
+		// poll with a timeout so the thread can notice 'exit'
 		struct pollfd pfd;
 		pfd.fd = STDIN_FILENO;
 		pfd.events = POLLIN;
 		pfd.revents = 0;
 		int ready = poll(&pfd, 1, 500);
-		if (ready <= 0) continue;   // timeout (or signal): re-check 'exit'
+		if (ready <= 0) continue;
 
-		if (!std::getline(std::cin, line)) {   // EOF: stdin closed
+		if (!std::getline(std::cin, line)) {
 			break;
 		}
 		if (!line.empty()) {
@@ -113,7 +112,7 @@ void OperatorConsole::handleLine(const std::string& line) {
 	}
 
 	logCommand(line);
-	int status = sendToServer(COMPUTER_CHANNEL_NAME, msg);   // blocks until ComputerSystem replies
+	int status = sendToServer(COMPUTER_CHANNEL_NAME, msg);
 	if (status == 0) {
 		std::cout << "OK\n";
 	} else {

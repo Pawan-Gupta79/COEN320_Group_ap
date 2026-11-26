@@ -45,7 +45,6 @@ DEPS = -Wp,-MMD,$(@:%.o=%.d),-MT,$@
 rwildcard = $(wildcard $(addprefix $1/*.,$2)) $(foreach d,$(wildcard $1/*),$(call rwildcard,$d,$2))
 
 #Source list
-# Sources live in the project root (the GitHub upload flattened the original src/ folder)
 SRCS = $(wildcard *.c *.cpp)
 
 #Object files list
