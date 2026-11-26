@@ -16,11 +16,21 @@ void timer_tick() {
 }
 
 
-int main() {
+int main(int argc, char* argv[]) {
     // Create the AirTrafficControl instance
     AirTrafficControl atc;
 
-    atc.readPlanesFromFile("group_ap_planes.txt");  // Ensure the file is in the correct directory
+    // Input file: a path given as the first argument, otherwise
+    // group_ap_planes.txt in the working directory, otherwise in /tmp
+    // (a program launched from Momentics may not run in the folder you expect).
+    std::string planesFile = "group_ap_planes.txt";
+    if (argc > 1) {
+        planesFile = argv[1];
+    } else if (access(planesFile.c_str(), R_OK) != 0) {
+        planesFile = "/tmp/group_ap_planes.txt";
+    }
+    std::cout << "Reading aircraft from " << planesFile << std::endl;
+    atc.readPlanesFromFile(planesFile);
 
     Radar radar(tick_counter);
 
