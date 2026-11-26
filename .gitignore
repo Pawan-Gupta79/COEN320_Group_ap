@@ -1,0 +1,14 @@
+# Momentics / QNX build output
+build/
+*.o
+*.d
+Lab4_ATC/Lab4_ATC_ARCH64
+Lab5_Computer/ATC_Computer
+Lab5_Display/Display
+
+# Per-machine IDE state
+.settings/
+.metadata/
+
+# macOS
+.DS_Store

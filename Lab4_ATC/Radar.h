@@ -2,6 +2,7 @@
 #define RADAR_H
 
 #include <atomic>  // Include to use atomic flag
+#include <chrono>
 #include <iostream>
 #include <unordered_set>
 #include <memory>
@@ -48,7 +49,7 @@ private:
     void pollAirspace();
     msg_plane_info getAircraftData(int id);
 
-    name_attach_t* Radar_channel;
+    name_attach_t* Radar_channel = NULL;
 
     std::mutex airspaceMutex;
     std::mutex bufferSwitchMutex;
@@ -62,13 +63,16 @@ private:
     ATCTimer timer;
 
     // Shared memory pointer
-    SharedMemory* sharedMemPtr;  // Update pointer type to match the structure
+    SharedMemory* sharedMemPtr = nullptr;  // Points into the mapped shared memory
     bool wasAirspaceEmpty = true;  // Track if airspace was empty last time
     int shm_fd = -1;
     std::atomic<bool> stopThreads;
 
     void shutdown();
 
+    // Shared memory lifecycle: create+map at startup, unmap+unlink at exit
+    bool initSharedMemory();
+    void cleanupSharedMemory();
 
 
 

@@ -55,6 +55,9 @@ private:
     Message createEnterAirspaceMessage(int planeID);
     Message createExitAirspaceMessage(int planeID);
     Message createPositionUpdateMessage(int planeID, const msg_plane_info& info);
+
+    // Task 4: apply an operator command forwarded by the CommunicationsSystem
+    void handleCommand(int rcvid, const Message_inter_process& msg);
 };
 
 #endif /* AIRCRAFT_H_ */

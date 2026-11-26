@@ -12,7 +12,11 @@
 #include <unistd.h>
 #include <chrono>
 #include <vector>
+#include <set>
+#include <utility>
+#include <sys/dispatch.h>
 
+// Minimum separation: two planes closer than this on ALL three axes = collision
 const double CONSTRAINT_X = 3000;
 const double CONSTRAINT_Y = 3000;
 const double CONSTRAINT_Z = 1000;
@@ -35,17 +39,23 @@ private:
     //Collsion detection
     void checkCollision(uint64_t currentTime, std::vector<msg_plane_info> planes);
     bool checkAxes(msg_plane_info plane1, msg_plane_info plane2);
-    bool sameSpeed(double peed1, double speed2);
 
     //Handle messages from operator
     void processMessage();
-    void sendMessagesToComms(const Message& msg);
-    void handleTimeConstraintChange(const Message& msg);
-    void sendCollisionToDisplay(const Message_inter_process& msg);
+    int sendMessagesToComms(const Message_inter_process& msg);
+    void handleTimeConstraintChange(const Message_inter_process& msg);
+    void printAugmentedInfo(int planeID);
+    bool sendCollisionToDisplay(const Message_inter_process& msg);
+    void stopOperatorListener();
 
-    int timeConstraintCollisionFreq = 180;
+    bool displayUpToDate = true;   // false -> last send to Display failed, retry next cycle
 
+    // Look-ahead window (seconds) for collision prediction. Atomic because the
+    // operator thread changes it while the monitor thread reads it.
+    std::atomic<int> timeConstraintCollisionFreq{180};
 
+    // Collision pairs reported last cycle, to only notify when the set changes
+    std::set<std::pair<int,int>> lastCollisions;
 
     int shm_fd;
     SharedMemory* shared_mem;
@@ -53,7 +63,8 @@ private:
     std::thread monitorOperatorInput;
     std::atomic<bool> running;
 
-    bool listen = true;
+    name_attach_t* operatorChannel = nullptr;  // receives OperatorConsole commands
+    std::atomic<bool> listen{true};
 };
 
 #endif // COMPUTER_SYSTEM_H

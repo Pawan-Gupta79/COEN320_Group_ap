@@ -2,13 +2,15 @@
 #include <iomanip>
 #include <memory>
 #include <pthread.h>
+#include <cstring>
+#include <sys/iomsg.h>   // _IO_CONNECT
 #include "Aircraft.h"
 #include "ATCTimer.h"
 
 
 //Coen320_Lab (Task0): Radar Channel name should contain your group name
-#define Radar "group_ap" //attach point for AirTrafficControl
-/*#define Display_ID "display" //attach point for AirTrafficControl // You need to set this for Part 2 (Display)*/
+#define Radar RADAR_CHANNEL_NAME //attach point for AirTrafficControl ("group_ap", see Msg_structs.h)
+// (The Display is not contacted by aircraft: collision alerts go ComputerSystem -> Display.)
 
 void* updatePositionThread(void* arg) {
     Aircraft* aircraft = static_cast<Aircraft*>(arg);
@@ -50,9 +52,51 @@ void Aircraft::printInitialAircraftData() const {
 
 
 void Aircraft::changeHeading(double Vx, double Vy, double Vz){
-	if (Vx > 0) speedX = Vx;
-	if (Vx > 0) speedY = Vy;
-	if (Vx > 0) speedZ = Vz;
+	// The template only applied the change when Vx > 0 (and tested Vx for all
+	// three axes). Negative velocities are valid headings, so always apply.
+	speedX = Vx;
+	speedY = Vy;
+	speedZ = Vz;
+}
+
+// COEN320 Lab 4_5 (Task 4): commands from the operator, forwarded by the
+// CommunicationsSystem. Runs in this aircraft's own thread, so it can change
+// position/speed without a mutex. Always replies so the sender unblocks.
+void Aircraft::handleCommand(int rcvid, const Message_inter_process& msg) {
+	int status = 0;  // 0 = applied, -1 = rejected
+	switch (msg.type) {
+	case MessageType::REQUEST_CHANGE_OF_HEADING: {
+		msg_change_heading h;
+		std::memcpy(&h, msg.data.data(), sizeof(h));
+		changeHeading(h.VelocityX, h.VelocityY, h.VelocityZ);
+		std::cout << "Aircraft " << id << ": new velocity (" << speedX << ", "
+		          << speedY << ", " << speedZ << ")\n";
+		break;
+	}
+	case MessageType::REQUEST_CHANGE_POSITION: {
+		msg_change_position p;
+		std::memcpy(&p, msg.data.data(), sizeof(p));
+		posX = p.x;
+		posY = p.y;
+		posZ = p.z;
+		std::cout << "Aircraft " << id << ": moved to (" << posX << ", "
+		          << posY << ", " << posZ << ")\n";
+		break;
+	}
+	case MessageType::REQUEST_CHANGE_ALTITUDE: {
+		msg_change_altitude a;
+		std::memcpy(&a, msg.data.data(), sizeof(a));
+		posZ = a.altitude;
+		std::cout << "Aircraft " << id << ": new altitude " << posZ << "\n";
+		break;
+	}
+	default:
+		std::cerr << "Aircraft " << id << ": unknown command type "
+		          << static_cast<int>(msg.type) << "\n";
+		status = -1;
+		break;
+	}
+	MsgReply(rcvid, EOK, &status, sizeof(status));
 }
 
 
@@ -100,7 +144,7 @@ int Aircraft::updatePosition() {
     //Coen320_Lab (Task0): Create channel to be reachable by radar that wants to poll the Airplane
     //To chose the polling channel concatenate your group name with the plane id
     //Note: It is critical to not interfere other groups
-    std::string id_str = "group_ap_plane_"+std::to_string(id);  // Convert integer id to string
+    std::string id_str = PLANE_CHANNEL_PREFIX + std::to_string(id);  // e.g. "group_ap_plane_3"
     const char* ID = id_str.c_str();         // Convert string to const char*
     name_attach_t* Plane_channel = name_attach(NULL, ID, 0); // For server
 
@@ -132,27 +176,45 @@ int Aircraft::updatePosition() {
             break;  // Exit the loop if out of bounds
         }
 
-        // Check for incoming position update requests from Radar
-        char buffer[sizeof(Message_inter_process)];  // Buffer to handle largest message size
-        int rcvid = MsgReceive(Plane_channel->chid, buffer, sizeof(buffer), NULL);
+        // Wait for the next message for this plane: either the Radar's periodic
+        // position request, or a sporadic operator command from the Comms system.
+        // QNX can also deliver SYSTEM traffic on a name_attach() channel:
+        //  - pulses (rcvid == 0), e.g. "a client disconnected"
+        //  - an _IO_CONNECT message when a client calls name_open()
+        // Those must be handled (and the connect replied to) or the client blocks,
+        // so we keep receiving until we get one of OUR messages.
+        bool gotOurMessage = false;
+        while (!gotOurMessage) {
+            alignas(8) char buffer[sizeof(Message_inter_process)];  // Buffer to handle largest message size
+            int rcvid = MsgReceive(Plane_channel->chid, buffer, sizeof(buffer), NULL);
 
-        if (rcvid != -1) {
+            if (rcvid == -1) {
+                perror("Aircraft: MsgReceive failed");
+                break;
+            }
+            if (rcvid == 0) {  // pulse
+                struct _pulse* pulse = reinterpret_cast<struct _pulse*>(buffer);
+                if (pulse->code == _PULSE_CODE_DISCONNECT) {
+                    ConnectDetach(pulse->scoid);  // free the dead client's connection
+                }
+                continue;
+            }
 
-        	bool isInterProcess = buffer[0] & 0x01;
-            // Radar requested position data
+            bool isInterProcess = buffer[0] & 0x01;
+            uint16_t systemType;
+            std::memcpy(&systemType, buffer, sizeof(systemType));
+            if (!isInterProcess && systemType == _IO_CONNECT) {
+                MsgReply(rcvid, EOK, NULL, 0);  // accept the name_open()
+                continue;
+            }
+            gotOurMessage = true;
+
             if (isInterProcess){  //sporadic
             	// Message is of type Message_inter_process
-            	Message_inter_process* receivedMsg = reinterpret_cast<Message_inter_process*>(buffer);
-
-            	// Handle different message types using switch
-                // COEN320 Lab 4_5: You need to handle different message types here
-                // These commands come from Communication System
-                /*
-                switch (receivedMsg->type) {
-                    case MessageType::REQUEST_CHANGE_OF_HEADING:
-                    case MessageType::REQUEST_CHANGE_POSITION:
-                    ....
-                */
+            	// COEN320 Lab 4_5: commands from the Communication System
+            	Message_inter_process receivedMsg;
+            	std::memcpy(&receivedMsg, buffer, sizeof(receivedMsg));
+            	handleCommand(rcvid, receivedMsg);
             } else {  //periodic
             	// Message is of type Message
             	Message* receivedMsg = reinterpret_cast<Message*>(buffer);
@@ -162,6 +224,8 @@ int Aircraft::updatePosition() {
             	    Message posUpdateMessage = createPositionUpdateMessage(id, positionData);
 
             	    MsgReply(rcvid, 0, &posUpdateMessage, sizeof(posUpdateMessage)); // Send reply with position
+            	} else {
+            		MsgError(rcvid, ENOSYS);  // never leave a sender blocked
             	}
             }
         }
@@ -171,6 +235,7 @@ int Aircraft::updatePosition() {
     }
 
     name_detach(Plane_channel, 0);
+    name_close(Radar_id);  // clean shutdown: release our connection to the Radar
     pthread_exit(NULL);
 
     return 0;
@@ -188,6 +253,7 @@ int Aircraft::getID(){
 //Coen320_Lab3 (Task2): look at the message creation example here
 Message Aircraft::createEnterAirspaceMessage(int planeID){
 	Message msg;
+	msg.header = false;  // intra-process (0). Must be set: receivers test this bit
 	msg.type = MessageType::ENTER_AIRSPACE;
 	msg.planeID = planeID;
 	msg.data = 	NULL;  // Allocate dynamically and copy info data
@@ -198,6 +264,7 @@ Message Aircraft::createEnterAirspaceMessage(int planeID){
 Message Aircraft::createExitAirspaceMessage(int planeID){
 
 	Message msg;
+	msg.header = false;
 	msg.type = MessageType::EXIT_AIRSPACE;// Use the correct Message type
 	msg.planeID = planeID;// Use the passed Plane ID
 	msg.data = NULL;
@@ -208,6 +275,7 @@ Message Aircraft::createExitAirspaceMessage(int planeID){
 Message Aircraft::createPositionUpdateMessage(int planeID, const msg_plane_info& info) {
 
     Message msg;
+    msg.header = false;
     msg.type = MessageType::POSITION_UPDATE; // Use the correct Message type
     msg.planeID = planeID;// Use the passed Plane ID
     msg.data = (void*)&info;  // Allocate and copy info data
