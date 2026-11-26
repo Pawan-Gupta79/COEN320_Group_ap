@@ -199,6 +199,19 @@ void Radar::writeToSharedMemory() {
 	*/
 
 
+	
+	int shm_fd = shm_open("group_ap", O_CREAT | O_RDWR, 0666);
+	    if (shm_fd == -1) {
+	        std::cerr << "Radar: shm_open failed in writeToSharedMemory: " << strerror(errno) << std::endl;
+	        return;
+	    }
+
+	    if (ftruncate(shm_fd, SHARED_MEMORY_SIZE) == -1) {
+	        std::cerr << "Radar: ftruncate failed in writeToSharedMemory: " << strerror(errno) << std::endl;
+	        close(shm_fd);
+	        return;
+	    }
+
 	// Get the active buffer based on the current active index
     std::vector<msg_plane_info>& activeBuffer = getActiveBuffer();
     // Get the current timestamp
